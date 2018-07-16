@@ -25,7 +25,6 @@ function Runtime () {
   let vm = null;
   let classFactory = null;
   let pending = [];
-  let threadsInPerform = 0;
   let cachedIsAppProcess = null;
 
   function tryInitialize () {
@@ -86,15 +85,7 @@ function Runtime () {
     }
   };
 
-  function assertCalledInJavaPerformCallback () {
-    if (threadsInPerform === 0) {
-      throw new Error('Not allowed outside Java.perform() callback');
-    }
-  }
-
   this.synchronized = function (obj, fn) {
-    assertCalledInJavaPerformCallback();
-
     const objHandle = obj.hasOwnProperty('$handle') ? obj.$handle : obj;
     if (!(objHandle instanceof NativePointer)) {
       throw new Error('Java.synchronized: the first argument `obj` must be either a pointer or a Java instance');
@@ -259,8 +250,6 @@ function Runtime () {
   }
 
   this.scheduleOnMainThread = function (fn) {
-    assertCalledInJavaPerformCallback();
-
     const ActivityThread = classFactory.use('android.app.ActivityThread');
     const Handler = classFactory.use('android.os.Handler');
     const Looper = classFactory.use('android.os.Looper');
@@ -287,61 +276,48 @@ function Runtime () {
     assertJavaApiIsAvailable();
 
     if (!isAppProcess() || classFactory.loader !== null) {
-      threadsInPerform++;
       try {
         vm.perform(fn);
       } catch (e) {
         setTimeout(() => { throw e; }, 0);
-      } finally {
-        threadsInPerform--;
       }
     } else {
       pending.push(fn);
       if (pending.length === 1) {
-        threadsInPerform++;
-        try {
-          vm.perform(() => {
-            const ActivityThread = classFactory.use('android.app.ActivityThread');
-            const app = ActivityThread.currentApplication();
-            if (app !== null) {
-              classFactory.loader = app.getClassLoader();
-              classFactory.cacheDir = app.getCacheDir().getCanonicalPath();
-              performPending(); // already initialized, continue
-            } else {
-              const m = ActivityThread.getPackageInfoNoCheck;
-              let initialized = false;
-              m.implementation = function (appInfo) {
-                const apk = m.apply(this, arguments);
-                if (!initialized) {
-                  initialized = true;
-                  classFactory.loader = apk.getClassLoader();
-                  classFactory.cacheDir = classFactory.use('java.io.File').$new(appInfo.dataDir.value + '/cache').getCanonicalPath();
-                  performPending();
-                }
-                return apk;
-              };
-            }
-          });
-        } finally {
-          threadsInPerform--;
-        }
+        vm.perform(() => {
+          const ActivityThread = classFactory.use('android.app.ActivityThread');
+          const app = ActivityThread.currentApplication();
+          if (app !== null) {
+            classFactory.loader = app.getClassLoader();
+            classFactory.cacheDir = app.getCacheDir().getCanonicalPath();
+            performPending(); // already initialized, continue
+          } else {
+            const m = ActivityThread.getPackageInfoNoCheck;
+            let initialized = false;
+            m.implementation = function (appInfo) {
+              const apk = m.apply(this, arguments);
+              if (!initialized) {
+                initialized = true;
+                classFactory.loader = apk.getClassLoader();
+                classFactory.cacheDir = classFactory.use('java.io.File').$new(appInfo.dataDir.value + '/cache').getCanonicalPath();
+                performPending();
+              }
+              return apk;
+            };
+          }
+        });
       }
     }
   };
 
   function performPending () {
-    threadsInPerform++;
-    try {
-      while (pending.length > 0) {
-        const fn = pending.shift();
-        try {
-          vm.perform(fn);
-        } catch (e) {
-          setTimeout(() => { throw e; }, 0);
-        }
+    while (pending.length > 0) {
+      const fn = pending.shift();
+      try {
+        vm.perform(fn);
+      } catch (e) {
+        setTimeout(() => { throw e; }, 0);
       }
-    } finally {
-      threadsInPerform--;
     }
   }
 
@@ -358,16 +334,10 @@ function Runtime () {
       });
     }
 
-    threadsInPerform++;
-    try {
-      vm.perform(fn);
-    } finally {
-      threadsInPerform--;
-    }
+    vm.perform(fn);
   };
 
   this.use = function (className) {
-    assertCalledInJavaPerformCallback();
     return classFactory.use(className);
   };
 
@@ -376,7 +346,6 @@ function Runtime () {
   };
 
   this.choose = function (specifier, callbacks) {
-    assertCalledInJavaPerformCallback();
     classFactory.choose(specifier, callbacks);
   };
 
@@ -390,7 +359,6 @@ function Runtime () {
 
   // Reference: http://stackoverflow.com/questions/2848575/how-to-detect-ui-thread-on-android
   this.isMainThread = function () {
-    assertCalledInJavaPerformCallback();
     const Looper = classFactory.use('android.os.Looper');
     const mainLooper = Looper.getMainLooper();
     const myLooper = Looper.myLooper();
