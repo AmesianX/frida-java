@@ -295,6 +295,8 @@ function Runtime () {
             const m = ActivityThread.getPackageInfoNoCheck;
             let initialized = false;
             m.implementation = function (appInfo) {
+              console.log('getPackageInfoNoCheck was called');
+              Thread.sleep(0.5);
               const apk = m.apply(this, arguments);
               if (!initialized) {
                 initialized = true;
@@ -304,6 +306,7 @@ function Runtime () {
               }
               return apk;
             };
+            console.log('hooked getPackageInfoNoCheck');
           }
         });
       }
